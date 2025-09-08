@@ -1,38 +1,42 @@
 #!/bin/bash
+set -e
 
-BACKUP_NAME="vps_backup.tar.gz"
-BACKUP_URL="https://transfer.sh/vps_backup.tar.gz"
+BACKUP_DIR="/opt/vps-backup"
+STATE_FILE="/var/lib/tailscale/tailscaled.state"
+TIMESTAMP=$(date -u +'%Y-%m-%d_%H-%M-%S-UTC')
+TMP_DIR="/tmp/vps-backup-$TIMESTAMP"
+BACKUP_ZIP="/tmp/backup-$TIMESTAMP.zip"
+DRIVE_REMOTE="gdrive"
+DRIVE_FOLDER="VPS-Backups/dilshant/$TIMESTAMP"
 
-function restore_backup() {
-  echo "🔄 Restoring backup..."
-  curl -s --fail $BACKUP_URL -o $BACKUP_NAME || {
-    echo "No previous backup found, starting fresh."
-    return 1
-  }
-  tar -xzf $BACKUP_NAME || {
-    echo "Failed to extract backup."
-    return 1
-  }
-  echo "✅ Backup restored."
-}
+echo "📦 Creating backup at $TIMESTAMP"
 
-function backup_and_upload() {
-  echo "💾 Creating backup and uploading..."
-  # Change these folders to whatever you want backed up
-  tar czf $BACKUP_NAME ./data ./scripts ./configs 2>/dev/null || {
-    echo "Nothing to backup or folders do not exist."
-    return 1
-  }
-  UPLOAD_LINK=$(curl --upload-file $BACKUP_NAME https://transfer.sh/$BACKUP_NAME)
-  echo "🆙 Backup uploaded: $UPLOAD_LINK"
-  echo $UPLOAD_LINK > last_backup_url.txt
-}
+# Prepare backup dir
+mkdir -p "$TMP_DIR/data"
 
-# Accept argument: restore_backup or backup_and_upload
-if [ "$1" == "restore_backup" ]; then
-  restore_backup
-elif [ "$1" == "backup_and_upload" ]; then
-  backup_and_upload
-else
-  echo "Usage: $0 [restore_backup|backup_and_upload]"
+# Save tailscale state if exists
+if [ -f "$STATE_FILE" ]; then
+  cp "$STATE_FILE" "$TMP_DIR/data/"
 fi
+
+# Copy previous VPS data if exists
+if [ -d "$BACKUP_DIR" ]; then
+  cp -r "$BACKUP_DIR"/* "$TMP_DIR/" || true
+fi
+
+# Zip everything
+cd "$TMP_DIR"
+zip -r "$BACKUP_ZIP" .
+cd -
+
+echo "✅ Backup created: $BACKUP_ZIP"
+
+# Upload to Google Drive
+echo "☁️ Uploading to Google Drive..."
+rclone mkdir "$DRIVE_REMOTE:$DRIVE_FOLDER"
+rclone copy "$BACKUP_ZIP" "$DRIVE_REMOTE:$DRIVE_FOLDER/"
+
+echo "✅ Backup uploaded: $DRIVE_REMOTE:$DRIVE_FOLDER/backup-$TIMESTAMP.zip"
+
+# Cleanup
+rm -rf "$TMP_DIR" "$BACKUP_ZIP"
